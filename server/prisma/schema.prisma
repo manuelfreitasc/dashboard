@@ -1,0 +1,77 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model User {
+  id        String   @id @default(uuid())
+  username  String   @unique
+  password  String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  rooms    RoomParticipant[]
+  addedVideos Video[] // Renamed from 'videos' to 'addedVideos' for clarity
+  // Removed 'syncStates SyncState[]' as the old SyncState model is being replaced
+}
+
+model Room {
+  id        String   @id @default(uuid())
+  name      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  participants RoomParticipant[]
+  videos       Video[]
+  syncState    SyncState? // A room can have one sync state
+}
+
+model RoomParticipant {
+  id        String   @id @default(uuid())
+  userId    String
+  roomId    String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id])
+  room Room @relation(fields: [roomId], references: [id])
+
+  @@unique([userId, roomId])
+}
+
+model Video {
+  id        String   @id @default(uuid())
+  roomId    String
+  title     String
+  url       String
+  duration  Float?   // Duration in seconds, optional
+  addedById String   // Changed from userId to addedById for clarity
+  addedAt   DateTime @default(now()) // Renamed from createdAt
+  updatedAt DateTime @updatedAt // Keep this for general model updates
+
+  room      Room     @relation(fields: [roomId], references: [id])
+  addedBy   User     @relation(fields: [addedById], references: [id])
+  // Removed 'syncStates SyncState[]' as the old SyncState model is being replaced
+  activeInSyncState SyncState[] @relation("CurrentVideoInRoom") // If this video is the current one in a room's sync state
+}
+
+// New SyncState model, one per room
+model SyncState {
+  id             String    @id @default(uuid())
+  roomId         String    @unique // Each room has only one sync state
+  currentVideoId String?   // The video currently selected for synced playback in the room
+  isPlaying      Boolean   @default(false)
+  progress       Float     @default(0)    // Current playback time in seconds for currentVideoId
+  lastEventTimestamp Float? @default(0) // Timestamp from the client event, for ordering
+  updatedAt      DateTime  @updatedAt     // When this sync state was last changed
+
+  room         Room      @relation(fields: [roomId], references: [id])
+  currentVideo Video?    @relation("CurrentVideoInRoom", fields: [currentVideoId], references: [id])
+
+  @@index([roomId])
+  @@index([currentVideoId])
+}
