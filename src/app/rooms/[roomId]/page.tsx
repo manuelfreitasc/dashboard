@@ -41,80 +41,101 @@ const RoomPage = () => {
   const [newVideoUrl, setNewVideoUrl] = useState('');
   const [newVideoTitle, setNewVideoTitle] = useState('');
   const [isSubmittingVideo, setIsSubmittingVideo] = useState(false);
+  const [addVideoError, setAddVideoError] = useState<string | null>(null); // Specific error state for add video form
 
   // Chat state
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [currentUserId, setCurrentUserId] = useState<string | undefined>(undefined);
 
 
-  const authToken = getAuthToken();
+  // const authToken = getAuthToken(); // To be replaced by useAuthStore
+  const { getAuthToken: getAuthStoreToken, user: authUser } = useAuthStore(state => ({ getAuthToken: state.getAuthToken, user: state.user }));
+
 
   // --- Data Fetching ---
   const fetchRoomData = useCallback(async () => {
-    if (!roomId || !authToken) return;
+    const token = getAuthStoreToken();
+    if (!roomId || !token) {
+      if(!token) toast.error("Authentication token not found for fetching room data.");
+      return;
+    }
     setIsLoading(true);
     try {
+      // Assuming API calls are direct to backend, not via Next.js /api routes for consistency
+      const ROOM_DETAILS_URL = `${process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:3001'}/rooms/${roomId}`;
+      const VIDEOS_LIST_URL = `${process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:3001'}/rooms/${roomId}/videos`;
+
       const [roomRes, videosRes] = await Promise.all([
-        fetch(`/api/rooms/${roomId}`, { headers: { 'Authorization': `Bearer ${authToken}` } }), // Assuming API is at /api
-        fetch(`/api/rooms/${roomId}/videos`, { headers: { 'Authorization': `Bearer ${authToken}` } })
+        fetch(ROOM_DETAILS_URL, { headers: { 'Authorization': `Bearer ${token}` } }),
+        fetch(VIDEOS_LIST_URL, { headers: { 'Authorization': `Bearer ${token}` } })
       ]);
 
-      if (!roomRes.ok) throw new Error(`Failed to fetch room details: ${roomRes.statusText}`);
+      if (!roomRes.ok) {
+        const errorData = await roomRes.json().catch(() => ({})); // Try to parse error, default to empty if not JSON
+        throw new Error(errorData.error || `Failed to fetch room details: ${roomRes.statusText}`);
+      }
       const roomData: Room = await roomRes.json();
       setRoomDetails(roomData);
-      toast.success(`Fetched room: ${roomData.name}`);
+      // toast.success(`Fetched room: ${roomData.name}`); // Can be noisy
 
 
-      if (!videosRes.ok) throw new Error(`Failed to fetch videos: ${videosRes.statusText}`);
+      if (!videosRes.ok) {
+        const errorData = await videosRes.json().catch(() => ({}));
+        throw new Error(errorData.error || `Failed to fetch videos: ${videosRes.statusText}`);
+      }
       const videosData: Video[] = await videosRes.json();
       setVideosInRoom(videosData);
-      toast.info(`Found ${videosData.length} videos in the room.`);
+      // toast.info(`Found ${videosData.length} videos in the room.`);
 
       // If sync state is part of roomData or fetched separately
       if (roomData.syncState) {
         setCurrentSyncState(roomData.syncState);
-        toast.info("Initial sync state loaded with room details.");
+        // toast.info("Initial sync state loaded with room details.");
       } else if (socket && isConnected) {
-        // If not part of initial load, request it
         console.log("Requesting initial sync state via socket...");
         emit('video:requestSync', { roomId });
       }
 
-
     } catch (e: any) {
       console.error("Error fetching room data:", e);
-      setError(e.message || 'Failed to load room data.');
+      setError(e.message || 'Failed to load room data.'); // This sets a general page error
       toast.error(e.message || 'Failed to load room data.');
     } finally {
       setIsLoading(false);
     }
-  }, [roomId, authToken, socket, isConnected, emit]);
+  }, [roomId, getAuthStoreToken, socket, isConnected, emit]);
 
 
   // --- Effects ---
   // Initial data fetch and socket connection
   useEffect(() => {
-    if (!authToken) {
-      toast.error("Authentication token not found. Redirecting to login.");
-      router.push('/login'); // Redirect to login if no token
+    const token = getAuthStoreToken();
+    if (!token && !authUser) { // Check both persisted token and current auth state
+      toast.error("Authentication required. Redirecting to login.");
+      router.push('/login');
       return;
     }
-    // Extract userId from token for chat styling (this is a basic way, consider a more robust user context)
-    try {
-        const tokenPayload = JSON.parse(atob(authToken.split('.')[1]));
-        if (tokenPayload.userId) {
-            setCurrentUserId(tokenPayload.userId);
-        }
-    } catch (e) {
-        console.error("Failed to parse auth token for userId:", e);
-    }
 
-    if (!socket || !isConnected) {
-      console.log("Connecting socket with token...");
-      connectSocket(authToken);
+    // Set currentUserId from authUser if available
+    if (authUser) {
+        setCurrentUserId(authUser.id);
+    } else if (token) { // Fallback to parsing token if authUser isn't populated yet by store hydration
+        try {
+            const tokenPayload = JSON.parse(atob(token.split('.')[1]));
+            if (tokenPayload.userId) {
+                setCurrentUserId(tokenPayload.userId);
+            }
+        } catch (e) {
+            console.error("Failed to parse auth token for userId:", e);
+        }
     }
     
-    fetchRoomData();
+    if (!socket || !isConnected) {
+      console.log("Connecting socket with token...");
+      connectSocket(token); // Use token from authStore
+    }
+    
+    fetchRoomData(); // fetchRoomData will also use getAuthStoreToken internally
 
     return () => {
       if (socket) {
@@ -269,36 +290,70 @@ const RoomPage = () => {
 
   const handleAddNewVideo = async (e: FormEvent) => {
     e.preventDefault();
-    if (!newVideoUrl || !newVideoTitle || !authToken) {
+    setAddVideoError(null); // Clear previous specific errors
+
+    if (!newVideoUrl || !newVideoTitle) {
       toast.error("Video URL and Title are required.");
+      setAddVideoError("Video URL and Title are required.");
       return;
     }
+
+    // Basic URL validation
+    try {
+      new URL(newVideoUrl); // This will throw an error if the URL is invalid
+    } catch (_) {
+      toast.error("Invalid Video URL format.");
+      setAddVideoError("Invalid Video URL format. Please enter a valid URL (e.g., http://example.com/video.mp4).");
+      return;
+    }
+
+    const token = getAuthStoreToken();
+    if (!token) {
+      toast.error("Authentication token not found. Please log in again.");
+      setAddVideoError("Authentication token not found.");
+      return;
+    }
+
     setIsSubmittingVideo(true);
     try {
-      const res = await fetch(`/api/rooms/${roomId}/videos`, {
+      const ADD_VIDEO_URL = `${process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:3001'}/rooms/${roomId}/videos`;
+      const res = await fetch(ADD_VIDEO_URL, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${authToken}`,
+          'Authorization': `Bearer ${token}`,
         },
-        body: JSON.stringify({ url: newVideoUrl, title: newVideoTitle }),
+        body: JSON.stringify({ url: newVideoUrl, title: newVideoTitle }), // Duration can be added if available
       });
+
+      const responseData = await res.json();
+
       if (!res.ok) {
-        const errorData = await res.json();
-        throw new Error(errorData.error || `Failed to add video: ${res.statusText}`);
+        throw new Error(responseData.error || `Failed to add video: ${res.statusText}`);
       }
-      const newVideo: Video = await res.json();
-      setVideosInRoom(prev => [...prev, newVideo]);
+      const newVideo: Video = responseData;
+      setVideosInRoom(prev => [...prev, newVideo]); // Optimistic update / local state update
       toast.success(`Video "${newVideo.title}" added successfully!`);
       setNewVideoUrl('');
       setNewVideoTitle('');
-      // Optionally, if it's the first video or no video is playing, change to it
-      if (!currentSyncState?.currentVideoId || videosInRoom.length === 0) {
+      setAddVideoError(null);
+      
+      // Optionally, if it's the first video or no video is playing, change to it via socket event
+      if (!currentSyncState?.currentVideoId && videosInRoom.length === 0) { // Check videosInRoom.length before adding newVideo
+         // The video list `videosInRoom` will update after this function, so the new video might be the only one
+         // It might be better to check if the *server* indicates it's the first video or if syncState is empty
+         // For now, if no current video ID, suggest changing to it.
+        handleVideoChange(newVideo.id); // This emits video:change
+      } else if (videosInRoom.length === 0 && newVideo) { // If the list was empty and we just added one
         handleVideoChange(newVideo.id);
       }
+
+
     } catch (e: any) {
       console.error("Error adding video:", e);
-      toast.error(e.message || "Failed to add video.");
+      const errorMsg = e.message || "Failed to add video.";
+      setAddVideoError(errorMsg);
+      toast.error(errorMsg);
     } finally {
       setIsSubmittingVideo(false);
     }
@@ -481,10 +536,18 @@ const RoomPage = () => {
               </ScrollArea>
               {/* Add Video Form - flex-shrink-0 so it doesn't get pushed out by ScrollArea */}
               <form onSubmit={handleAddNewVideo} className="space-y-2 flex-shrink-0 pt-2 border-t">
-                 <Input type="text" value={newVideoTitle} onChange={(e) => setNewVideoTitle(e.target.value)} placeholder="Video title" disabled={isSubmittingVideo} className="h-9 text-sm"/>
-                 <Input type="text" value={newVideoUrl} onChange={(e) => setNewVideoUrl(e.target.value)} placeholder="Video URL" disabled={isSubmittingVideo} className="h-9 text-sm"/>
+                 <Input type="text" value={newVideoTitle} onChange={(e) => setNewVideoTitle(e.target.value)} placeholder="Video title" disabled={isSubmittingVideo} className="h-9 text-sm" aria-label="Video Title"/>
+                 <Input type="url" value={newVideoUrl} onChange={(e) => setNewVideoUrl(e.target.value)} placeholder="Video URL (e.g., https://...)" disabled={isSubmittingVideo} className="h-9 text-sm" aria-label="Video URL"/>
+                {addVideoError && <p className="text-xs text-red-500">{addVideoError}</p>}
                 <Button type="submit" disabled={isSubmittingVideo} className="w-full h-9 text-sm">
-                  {isSubmittingVideo ? 'Adding...' : 'Add Video'}
+                  {isSubmittingVideo ? (
+                    <>
+                      <ReloadIcon className="mr-2 h-4 w-4 animate-spin" />
+                      Adding...
+                    </>
+                  ) : (
+                    'Add Video'
+                  )}
                 </Button>
               </form>
             </CardContent>
