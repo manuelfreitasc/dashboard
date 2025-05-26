@@ -6,9 +6,10 @@ import roomRoutes from './routes/rooms'; // Import room routes
 import { handleRoomEvents } from './websockets/roomHandler'; // Import room WebSocket handlers
 import { handleVideoSyncEvents } from './websockets/videoSyncHandler'; // Import video sync WebSocket handlers
 import { handleChatEvents } from './websockets/chatHandler'; // Import chat WebSocket handlers
-import { verifyToken } from './lib/authUtils'; // For authenticating sockets
+import { verifyToken } from './lib/authUtils'; 
 
-const fastify = Fastify({ logger: true });
+const fastify = Fastify({ logger: true })
+fastify.register(require('@fastify/cors'), { origin: '*' })
 const prisma = new PrismaClient();
 
 // Setup Socket.IO
