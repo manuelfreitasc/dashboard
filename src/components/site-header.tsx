@@ -1,17 +1,14 @@
 "use client"; // Required because we'll use a hook (useAuthStore)
 
 import Link from 'next/link';
-"use client";
-
-import Link from 'next/link';
 import { useRouter } from 'next/navigation'; // Import useRouter
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { SidebarTrigger } from "@/components/ui/sidebar";
 import { ModeToggle } from "./toogle-theme";
-import { useAuthStore } from '@/lib/authStore';
-import { PlusCircledIcon, ExitIcon } from '@radix-ui/react-icons'; // Added ExitIcon
+import { useAuthStore } from '@/lib/authStore';// Added ExitIcon
 import { toast } from 'sonner';
+import { LogOut, Plus } from 'lucide-react';
 
 export function SiteHeader() {
   const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
@@ -34,12 +31,12 @@ export function SiteHeader() {
           <>
             <Link href="/rooms/create" passHref>
               <Button variant="outline" size="sm">
-                <PlusCircledIcon className="mr-2 h-4 w-4" />
+                <Plus className="mr-2 h-4 w-4" />
                 Create Room
               </Button>
             </Link>
             <Button variant="outline" size="sm" onClick={handleLogout}>
-              <ExitIcon className="mr-2 h-4 w-4" />
+              <LogOut className="mr-2 h-4 w-4" />
               Logout
             </Button>
           </>

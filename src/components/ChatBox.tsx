@@ -4,7 +4,7 @@ import React, { useState, FormEvent, useRef, useEffect } from 'react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { PaperPlaneIcon } from '@radix-ui/react-icons'; // Example icon
+import { SendIcon } from 'lucide-react';
 
 export interface ChatMessage {
   messageId?: string; // Optional: for React key, can be generated on client or come from server
@@ -99,7 +99,7 @@ const ChatBox: React.FC<ChatBoxProps> = ({
           disabled={isLoading}
         />
         <Button type="submit" disabled={isLoading || !newMessage.trim()}>
-          Send <PaperPlaneIcon className="ml-2 h-4 w-4" />
+          Send <SendIcon className="ml-2 h-4 w-4" />
         </Button>
       </form>
     </div>
