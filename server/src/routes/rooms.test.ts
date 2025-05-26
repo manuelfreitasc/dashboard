@@ -30,6 +30,19 @@ vi.mock('@prisma/client', () => {
       findUnique: vi.fn(),
       create: vi.fn(),
       findMany: vi.fn(), // For /me/rooms
+      createMany: vi.fn(), // For /me/rooms specific test setup
+      deleteMany: vi.fn(), // For /me/rooms specific test cleanup
+    },
+    user: { // Extended for participant invitation and /me/rooms tests
+      findUnique: vi.fn(),
+      create: vi.fn(), // For /me/rooms specific test setup
+      deleteMany: vi.fn(), // For /me/rooms specific test cleanup
+    },
+    room: { // Extended for /me/rooms specific test setup
+      create: vi.fn(),
+      findMany: vi.fn(),
+      findUnique: vi.fn(),
+      deleteMany: vi.fn(), // For /me/rooms specific test cleanup
     },
     // Add other models and methods as needed
   };
@@ -37,23 +50,34 @@ vi.mock('@prisma/client', () => {
 });
 
 // Mock the authenticate middleware
+// Allow dynamic setting of the authenticated user for specific tests
+let mockCurrentUser: { userId: string; username: string } | null = null;
 vi.mock('../lib/authUtils', async (importOriginal) => {
     const actual = await importOriginal<typeof import('../lib/authUtils')>();
     return {
-        ...actual, // Import and retain default exports
+        ...actual,
         authenticate: vi.fn(async (request: FastifyRequest, reply: FastifyReply) => {
-            // Attach a mock user to the request for protected routes
-            (request as any).user = { userId: 'testUserId', username: 'testUser' };
+            if (mockCurrentUser) {
+                (request as any).user = mockCurrentUser;
+            } else {
+                // Default mock user if no specific user is set for the test
+                (request as any).user = { userId: 'defaultTestUserId', username: 'defaultTestUser' };
+            }
         }),
+        // We might need to mock generateToken if it's complex or has external deps not available in test
+        // For now, assuming direct import works or it's not strictly needed if authenticate is fully controlled.
+        // generateToken: vi.fn((payload) => `mocked.jwt.token.for.${payload.userId}`),
     };
 });
 
 
 describe('Room and Video Routes', () => {
   let app: FastifyInstance;
-  let prismaMock: any;
+  let prismaMock: any; // This will be the new PrismaClient() which is the mock
 
-  const mockUserInviter = { userId: 'inviterUserId', username: 'inviterUser' };
+  const defaultMockUser = { userId: 'defaultTestUserId', username: 'defaultTestUser' };
+  // Updated mockUserInviter to use defaultMockUser for consistency in existing tests if they rely on a specific user from the outer beforeEach
+  const mockUserInviter = defaultMockUser;
   const mockUserToInvite = { userId: 'toInviteUserId', username: 'toInviteUser' };
   const mockAnotherParticipant = { userId: 'anotherParticipantId', username: 'anotherParticipant' };
   const mockRoomId = 'room123';
@@ -62,23 +86,21 @@ describe('Room and Video Routes', () => {
 
   beforeEach(async () => {
     app = Fastify();
-    prismaMock = new PrismaClient(); // This is the mock instance
+    prismaMock = new PrismaClient(); // Get the mocked instance
     app.register(roomRoutes);
-
-    // Override the authenticate mock for specific tests if needed,
-    // otherwise the default mock (providing mockUserInviter) will be used.
-    // This is crucial for testing scenarios involving different authenticated users.
-    // The default mock is set up to use mockUserInviter:
-    (app.authenticate as any) = vi.fn(async (request: FastifyRequest, reply: FastifyReply) => {
-        (request as any).user = mockUserInviter;
-    });
-
+    // The global mockCurrentUser is null by default.
+    // For tests that need a specific user, set mockCurrentUser before app.inject
+    // For tests that don't set it, the authenticate mock will use 'defaultTestUser'
+    mockCurrentUser = defaultMockUser; // Set a default for general tests
     await app.ready();
   });
 
   afterEach(async () => {
     await app.close();
-    vi.resetAllMocks(); // This resets all vi mocks, including Prisma and authenticate
+    vi.clearAllMocks(); // Use clearAllMocks to reset call counts etc. for fresh state in next test.
+                       // resetAllMocks would also reset the implementation of mocks, which might be too much if some are globally configured.
+                       // vi.restoreAllMocks might be an option if we need to restore original implementations.
+    mockCurrentUser = null; // Reset mock user
   });
 
   // --- Room Routes ---
@@ -391,9 +413,126 @@ describe('Room and Video Routes', () => {
 
     it('should trigger authenticate middleware', async () => {
         // This test mostly ensures the route is protected and uses the mocked user
+        mockCurrentUser = { userId: 'specificUserForThisTest', username: 'specificTestUsername' };
         prismaMock.roomParticipant.findMany.mockResolvedValue([]);
-        await app.inject({ method: 'GET', url: '/me/rooms' });
-        expect(app.authenticate).toHaveBeenCalled();
+        
+        const response = await app.inject({ method: 'GET', url: '/me/rooms' });
+        
+        // Check if the authenticate mock was called
+        const authUtils = await import('../lib/authUtils');
+        expect(authUtils.authenticate).toHaveBeenCalled();
+        
+        // Also check that the correct user was passed by the mock
+        // This requires the authenticate mock to pass the user details to the handler,
+        // which it does by setting request.user.
+        // The prismaMock.roomParticipant.findMany should be called with the userId from mockCurrentUser.
+        expect(prismaMock.roomParticipant.findMany).toHaveBeenCalledWith(
+            expect.objectContaining({
+                where: { userId: 'specificUserForThisTest' },
+            })
+        );
+    });
+  });
+
+  describe('GET /me/rooms user-specific retrieval', () => {
+    let userA: any, userB: any;
+    let room1: any, room2: any, room3: any;
+
+    beforeEach(async () => {
+      // Setup: Create users, rooms, and participants
+      // Note: These are calling the MOCKED Prisma methods.
+      // We need to ensure the mock implementations for create/createMany return appropriate data
+      // and that findMany can use this data.
+
+      userA = { id: 'userA_id', username: 'userA_me_test', password: 'passwordA' };
+      userB = { id: 'userB_id', username: 'userB_me_test', password: 'passwordB' };
+      prismaMock.user.create
+        .mockResolvedValueOnce(userA)
+        .mockResolvedValueOnce(userB);
+      await prismaMock.user.create({ data: { username: userA.username, password: userA.password } }); // Call it to match sequence if needed
+      await prismaMock.user.create({ data: { username: userB.username, password: userB.password } });
+
+
+      room1 = { id: 'room1_id', name: 'Room1_me_test', createdAt: new Date(), _count: {participants: 0 }};
+      room2 = { id: 'room2_id', name: 'Room2_me_test', createdAt: new Date(), _count: {participants: 0 }};
+      room3 = { id: 'room3_id', name: 'Room3_me_test', createdAt: new Date(), _count: {participants: 0 }};
+      prismaMock.room.create
+        .mockResolvedValueOnce(room1)
+        .mockResolvedValueOnce(room2)
+        .mockResolvedValueOnce(room3);
+      await prismaMock.room.create({ data: { name: room1.name } });
+      await prismaMock.room.create({ data: { name: room2.name } });
+      await prismaMock.room.create({ data: { name: room3.name } });
+
+      const participantData = [
+        { userId: userA.id, roomId: room1.id, room: room1 },
+        { userId: userA.id, roomId: room2.id, room: room2 },
+        { userId: userB.id, roomId: room2.id, room: room2 },
+        { userId: userB.id, roomId: room3.id, room: room3 },
+      ];
+      // Mock createMany to just accept data, not actually store it in this simplified mock.
+      // The findMany mock will be responsible for returning the correct data based on userId.
+      prismaMock.roomParticipant.createMany.mockResolvedValue({ count: participantData.length });
+      await prismaMock.roomParticipant.createMany({ data: participantData.map(p => ({userId: p.userId, roomId: p.roomId})) });
+
+      // Configure findMany to return data based on the userId
+      prismaMock.roomParticipant.findMany.mockImplementation(async ({ where, include, orderBy }: any) => {
+        const filteredParticipants = participantData.filter(p => p.userId === where.userId);
+        // Simulate include and orderBy if necessary for more complex scenarios.
+        // For this test, returning the room object directly associated with the participant is enough.
+        return filteredParticipants.map(fp => ({
+            ...fp, // contains userId, roomId, room object
+            ...(include?.room && { room: { ...fp.room, _count: { participants: participantData.filter(p => p.roomId === fp.roomId).length } } })
+        }));
+      });
+    });
+
+    afterEach(async () => {
+      // Cleanup: Reset mocks or clear specific data if the mock stored it
+      // Since this mock doesn't deeply store state that interferes across tests after vi.clearAllMocks(),
+      // specific deleteMany calls on the mock might not be strictly necessary unless we want to verify they are called.
+      // For a real DB, deleteMany would be crucial.
+      prismaMock.roomParticipant.deleteMany.mockReset();
+      prismaMock.room.deleteMany.mockReset();
+      prismaMock.user.deleteMany.mockReset();
+      prismaMock.roomParticipant.findMany.mockReset(); // Reset implementation
+    });
+
+    it('should return rooms for User A correctly', async () => {
+      mockCurrentUser = { userId: userA.id, username: userA.username };
+
+      const response = await app.inject({
+        method: 'GET',
+        url: '/me/rooms',
+        // No need for Authorization header if authenticate is mocked to use mockCurrentUser
+      });
+
+      expect(response.statusCode).toBe(200);
+      const rooms = response.json();
+      expect(rooms).toBeInstanceOf(Array);
+      expect(rooms).toHaveLength(2);
+      const roomNames = rooms.map((r: any) => r.name);
+      expect(roomNames).toContain(room1.name);
+      expect(roomNames).toContain(room2.name);
+      expect(roomNames).not.toContain(room3.name);
+    });
+
+    it('should return rooms for User B correctly', async () => {
+      mockCurrentUser = { userId: userB.id, username: userB.username };
+
+      const response = await app.inject({
+        method: 'GET',
+        url: '/me/rooms',
+      });
+
+      expect(response.statusCode).toBe(200);
+      const rooms = response.json();
+      expect(rooms).toBeInstanceOf(Array);
+      expect(rooms).toHaveLength(2);
+      const roomNames = rooms.map((r: any) => r.name);
+      expect(roomNames).not.toContain(room1.name);
+      expect(roomNames).toContain(room2.name);
+      expect(roomNames).toContain(room3.name);
     });
   });
 });
