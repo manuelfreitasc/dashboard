@@ -3,10 +3,12 @@
 import {
   IconCreditCard,
   IconDotsVertical,
+  IconLayoutList, // Added IconLayoutList
   IconLogout,
   IconNotification,
   IconUserCircle,
 } from "@tabler/icons-react"
+import { useRouter } from "next/navigation"; // Added useRouter
 
 import {
   Avatar,
@@ -38,7 +40,8 @@ export function NavUser({
     avatar: string
   }
 }) {
-  const { isMobile } = useSidebar()
+  const { isMobile } = useSidebar();
+  const router = useRouter(); // Initialized router
 
   return (
     <SidebarMenu>
@@ -87,6 +90,10 @@ export function NavUser({
               <DropdownMenuItem>
                 <IconUserCircle />
                 Account
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => router.push('/my-rooms')}>
+                <IconLayoutList />
+                My Rooms
               </DropdownMenuItem>
               <DropdownMenuItem>
                 <IconCreditCard />
