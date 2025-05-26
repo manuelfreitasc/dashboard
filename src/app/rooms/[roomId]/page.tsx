@@ -32,8 +32,9 @@ import {
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton"; // Import Skeleton
 import { toast } from "sonner";
-import { RefreshCw } from "lucide-react";
+import { RefreshCw, Users } from "lucide-react"; // Added Users icon
 import { useAuthStore } from "@/lib/authStore";
+import InviteUserModal from '@/components/invite-user-modal'; // Added InviteUserModal import
 
 const RoomPage = () => {
   const params = useParams();
@@ -82,6 +83,9 @@ const RoomPage = () => {
   const [currentUserId, setCurrentUserId] = useState<string | undefined>(
     undefined,
   );
+
+  // Invite User Modal State
+  const [isInviteModalOpen, setIsInviteModalOpen] = useState(false);
 
   const { getAuthToken: getAuthStoreToken, user: authUser } = useAuthStore();
 
@@ -575,17 +579,27 @@ const RoomPage = () => {
               | Socket: {isConnected ? "Connected" : "Disconnected"}
             </CardDescription>
           </div>
-          <Button
-            variant="outline"
-            size="icon"
-            onClick={() => {
-              emit("video:requestSync", { roomId });
-              toast.info("Resync request sent!");
-            }}
-            title="Request full sync from server"
-          >
-            <RefreshCw className="h-4 w-4" />
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="icon"
+              onClick={() => {
+                emit("video:requestSync", { roomId });
+                toast.info("Resync request sent!");
+              }}
+              title="Request full sync from server"
+            >
+              <RefreshCw className="h-4 w-4" />
+            </Button>
+            <Button
+              variant="outline"
+              size="icon"
+              onClick={() => setIsInviteModalOpen(true)}
+              title="Invite users to this room"
+            >
+              <Users className="h-4 w-4" />
+            </Button>
+          </div>
         </CardHeader>
       </Card>
 
@@ -736,6 +750,11 @@ const RoomPage = () => {
           </Card>
         </div>
       </div>
+      <InviteUserModal
+        roomId={roomId}
+        isOpen={isInviteModalOpen}
+        onClose={() => setIsInviteModalOpen(false)}
+      />
     </div>
   );
 };

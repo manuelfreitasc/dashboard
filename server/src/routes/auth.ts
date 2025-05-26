@@ -1,6 +1,6 @@
 import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { PrismaClient } from '@prisma/client';
-import { hashPassword, comparePassword, generateToken } from '../lib/authUtils';
+import { hashPassword, comparePassword, generateToken, authenticate } from '../lib/authUtils'; // Added authenticate
 
 const prisma = new PrismaClient();
 
@@ -66,6 +66,45 @@ async function authRoutes(fastify: FastifyInstance) {
       reply.status(500).send({ error: 'Internal server error' });
     }
   });
+
+  // Search for users
+  fastify.get(
+    '/auth/users/search',
+    { preHandler: [authenticate] },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const { q: searchTerm } = request.query as { q?: string };
+      const authenticatedUserId = (request as any).user.userId;
+
+      if (!searchTerm || searchTerm.trim().length < 2) {
+        reply.status(400).send({ error: 'Search term must be at least 2 characters long' });
+        return;
+      }
+
+      try {
+        const users = await prisma.user.findMany({
+          where: {
+            username: {
+              contains: searchTerm.trim(),
+              mode: 'insensitive',
+            },
+            NOT: {
+              id: authenticatedUserId,
+            },
+          },
+          select: {
+            id: true,
+            username: true,
+          },
+          take: 10,
+        });
+
+        reply.status(200).send(users);
+      } catch (error) {
+        console.error('User search error:', error);
+        reply.status(500).send({ error: 'Internal server error while searching for users' });
+      }
+    },
+  );
 }
 
 export default authRoutes;
